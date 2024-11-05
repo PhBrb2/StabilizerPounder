@@ -48,6 +48,7 @@ use stabilizer::{
         signal_generator::{self, SignalGenerator},
         timers::SamplingTimer,
         DigitalInput0, DigitalInput1, SystemTimer, Systick, AFE0, AFE1,
+        setup::PounderDevices as Pounder,
     },
     net::{
         data_stream::{FrameGenerator, StreamFormat, StreamTarget},
@@ -74,6 +75,21 @@ const SAMPLE_PERIOD: f32 =
 
 #[derive(Clone, Copy, Debug, Tree)]
 pub struct Settings {
+    pounder_1_ftw1: u32,
+    pounder_1_pow: u16,
+    pounder_1_acr1: u32,
+    pounder_1_att1: f32,
+    pounder_1_ftw2: u32,
+    pounder_1_acr2: u32,
+    pounder_1_att2: f32,
+    pounder_2_ftw1: u32,
+    pounder_2_pow: u16,
+    pounder_2_acr1: u32,
+    pounder_2_att1: f32,
+    pounder_2_ftw2: u32,
+    pounder_2_acr2: u32,
+    pounder_2_att2: f32,
+
     /// Configure the Analog Front End (AFE) gain.
     ///
     /// # Path
@@ -166,6 +182,21 @@ impl Default for Settings {
             force_hold: false,
             // The default telemetry period in seconds.
             telemetry_period: 10,
+            
+            pounder_1_ftw1: 0,
+            pounder_1_pow: 0,
+            pounder_1_acr1: 1<<12,
+            pounder_1_att1: 30.0,
+            pounder_1_ftw2: 0,
+            pounder_1_acr2: 1<<12,
+            pounder_1_att2: 30.0,
+            pounder_2_ftw1: 0,
+            pounder_2_pow: 0,
+            pounder_2_acr1: 1<<12,
+            pounder_2_att1: 30.0,
+            pounder_2_ftw2: 0,
+            pounder_2_acr2: 1<<12,
+            pounder_2_att2: 30.0,
 
             signal_generator: [signal_generator::BasicConfig::default(); 2],
 
@@ -176,6 +207,8 @@ impl Default for Settings {
 
 #[rtic::app(device = stabilizer::hardware::hal::stm32, peripherals = true, dispatchers=[DCMI, JPEG, LTDC, SDMMC])]
 mod app {
+    use hardware::pounder::attenuators::AttenuatorInterface;
+
     use super::*;
 
     #[monotonic(binds = SysTick, default = true, priority = 2)]
@@ -189,6 +222,7 @@ mod app {
         settings: Settings,
         telemetry: TelemetryBuffer,
         signal_generator: [SignalGenerator; 2],
+        pounder: Option<Pounder>,
     }
 
     #[local]
@@ -208,7 +242,7 @@ mod app {
         let clock = SystemTimer::new(|| monotonics::now().ticks() as u32);
 
         // Configure the microcontroller
-        let (stabilizer, _pounder) = hardware::setup::setup(
+        let (stabilizer, pounder) = hardware::setup::setup(
             c.core,
             c.device,
             clock,
@@ -246,6 +280,7 @@ mod app {
                         .unwrap(),
                 ),
             ],
+            pounder,
         };
 
         let mut local = Local {
@@ -413,7 +448,7 @@ mod app {
         }
     }
 
-    #[task(priority = 1, local=[afes], shared=[network, settings, signal_generator])]
+    #[task(priority = 1, local=[afes], shared=[network, settings, signal_generator, pounder])]
     fn settings_update(mut c: settings_update::Context) {
         let settings = c.shared.network.lock(|net| *net.miniconf.settings());
         c.shared.settings.lock(|current| *current = settings);
@@ -437,6 +472,25 @@ mod app {
             }
         }
 
+        c.shared.pounder.lock(|pounder| {
+            if let Some(pounder) = pounder {
+                let mut builder = pounder.dds_output.builder();
+                builder.update_channels(ad9959::Channel::ONE, Some(settings.pounder_1_ftw1), Some(settings.pounder_1_pow), Some(settings.pounder_1_acr1));
+                builder.update_channels(ad9959::Channel::TWO, Some(settings.pounder_1_ftw2), Some(0), Some(settings.pounder_1_acr2));
+                builder.write();
+                let _ = pounder.pounder.set_attenuation(crate::hardware::pounder::Channel::In0, settings.pounder_1_att2);
+                let _ = pounder.pounder.set_attenuation(crate::hardware::pounder::Channel::Out0, settings.pounder_1_att1);
+                let _ = pounder.pounder.set_attenuation(crate::hardware::pounder::Channel::In1, settings.pounder_2_att2);
+                let _ = pounder.pounder.set_attenuation(crate::hardware::pounder::Channel::Out1, settings.pounder_2_att1);
+                let mut builder = pounder.dds_output.builder();
+                builder.update_channels(ad9959::Channel::THREE, Some(settings.pounder_2_ftw1), Some(settings.pounder_2_pow), Some(settings.pounder_2_acr1));
+                builder.update_channels(ad9959::Channel::FOUR, Some(settings.pounder_2_ftw2), Some(0), Some(settings.pounder_2_acr2));
+                builder.write();
+            } else {
+                log::error!("Pounder not found");
+            }
+        });
+        
         let target = settings.stream_target.into();
         c.shared.network.lock(|net| net.direct_stream(target));
     }
