@@ -1,16 +1,11 @@
-[![QUARTIQ Matrix Chat](https://img.shields.io/matrix/quartiq:matrix.org)](https://matrix.to/#/#quartiq:matrix.org)
-[![Continuous Integration](https://github.com/quartiq/stabilizer/actions/workflows/ci.yml/badge.svg)](https://github.com/quartiq/stabilizer/actions/workflows/ci.yml)
-[![Stabilizer HITL [Nightly]](https://github.com/quartiq/hitl/actions/workflows/stabilizer-nightly.yml/badge.svg)](https://github.com/quartiq/hitl/actions/workflows/stabilizer-nightly.yml)
+Firmware for laser spectroscopy stabilization using [![Stabilizer](https://github.com/sinara-hw/Stabilizer)] and [![Pounder](https://github.com/sinara-hw/Pounder)]
 
-# Stabilizer Firmware
+Forked from https://github.com/quartiq/stabilizer
 
-## Applications
+# Description
+This firmware exposes DDS parameters over MQTT.
+It is intended for use with [![LaserLeash S³](https://github.com/PhBrb/LaserLeashS3)]
 
-Check out the [Documentation](https://quartiq.de/stabilizer) for more information on usage,
-configuration, and development.
 
-## Hardware
-
-[![Stabilizer](https://github.com/sinara-hw/Stabilizer/wiki/Stabilizer_v1.0_top_small.jpg)](https://github.com/sinara-hw/Stabilizer)
-
-[![Pounder](https://user-images.githubusercontent.com/1338946/125936814-3664aa2d-a530-4c85-9393-999a7173424e.png)](https://github.com/sinara-hw/Pounder/wiki)
+# Acknowledgment
+This research was funded by the Federal Ministry for Economic Affairs and Climate Action (BMWK) due to an enactment of the German Bundestag under Grant 50NA2106 (QGyro+).
