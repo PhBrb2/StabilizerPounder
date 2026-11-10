@@ -47,6 +47,7 @@ use stabilizer::{
         afe::Gain,
         dac::{Dac0Output, Dac1Output, DacCode},
         hal,
+        setup::PounderDevices as Pounder,
         signal_generator::{self, SignalGenerator},
         timers::SamplingTimer,
         DigitalInput0, DigitalInput1, SerialTerminal, SystemTimer, Systick,
@@ -105,6 +106,22 @@ impl serial_settings::Settings for Settings {
 
 #[derive(Clone, Debug, Tree, Serialize, Deserialize)]
 pub struct DualIir {
+
+    pounder_1_ftw1: Leaf<u32>,
+    pounder_1_pow: Leaf<u16>,
+    pounder_1_acr1: Leaf<u32>,
+    pounder_1_att1: Leaf<f32>,
+    pounder_1_ftw2: Leaf<u32>,
+    pounder_1_acr2: Leaf<u32>,
+    pounder_1_att2: Leaf<f32>,
+    pounder_2_ftw1: Leaf<u32>,
+    pounder_2_pow: Leaf<u16>,
+    pounder_2_acr1: Leaf<u32>,
+    pounder_2_att1: Leaf<f32>,
+    pounder_2_ftw2: Leaf<u32>,
+    pounder_2_acr2: Leaf<u32>,
+    pounder_2_att2: Leaf<f32>,
+
     /// Configure the Analog Front End (AFE) gain.
     ///
     /// # Path
@@ -181,6 +198,22 @@ impl Default for DualIir {
         i.set_min(-SCALE);
         i.set_max(SCALE);
         Self {
+            // Pounder defaults: DDS off, full amplitude control enabled, 30 dB attenuation.
+            pounder_1_ftw1: 0.into(),
+            pounder_1_pow: 0.into(),
+            pounder_1_acr1: (1 << 12).into(),
+            pounder_1_att1: 30.0.into(),
+            pounder_1_ftw2: 0.into(),
+            pounder_1_acr2: (1 << 12).into(),
+            pounder_1_att2: 30.0.into(),
+            pounder_2_ftw1: 0.into(),
+            pounder_2_pow: 0.into(),
+            pounder_2_acr1: (1 << 12).into(),
+            pounder_2_att1: 30.0.into(),
+            pounder_2_ftw2: 0.into(),
+            pounder_2_acr2: (1 << 12).into(),
+            pounder_2_att2: 30.0.into(),
+
             // Analog frontend programmable gain amplifier gains (G1, G2, G5, G10)
             afe: Default::default(),
             // IIR filter tap gains are an array `[b0, b1, b2, a1, a2]` such that the
@@ -206,6 +239,8 @@ impl Default for DualIir {
 
 #[rtic::app(device = stabilizer::hardware::hal::stm32, peripherals = true, dispatchers=[DCMI, JPEG, LTDC, SDMMC])]
 mod app {
+    use hardware::pounder::attenuators::AttenuatorInterface;
+
     use super::*;
 
     #[shared]
@@ -216,6 +251,7 @@ mod app {
         active_settings: DualIir,
         telemetry: TelemetryBuffer,
         source: [SignalGenerator; 2],
+        pounder: Option<Pounder>,
     }
 
     #[local]
@@ -236,7 +272,7 @@ mod app {
         let clock = SystemTimer::new(|| Systick::now().ticks());
 
         // Configure the microcontroller
-        let (stabilizer, _pounder) = hardware::setup::setup::<Settings, 4>(
+        let (stabilizer, pounder) = hardware::setup::setup::<Settings, 4>(
             c.core,
             c.device,
             clock,
@@ -273,6 +309,7 @@ mod app {
                 ),
             ],
             settings: stabilizer.settings,
+            pounder,
         };
 
         let mut local = Local {
@@ -452,7 +489,7 @@ mod app {
         }
     }
 
-    #[task(priority = 1, local=[afes], shared=[network, settings, active_settings, source])]
+    #[task(priority = 1, local=[afes], shared=[network, settings, active_settings, source, pounder])]
     async fn settings_update(mut c: settings_update::Context) {
         c.shared.settings.lock(|settings| {
             c.local.afes.0.set_gain(*settings.dual_iir.afe[0]);
@@ -474,6 +511,58 @@ mod app {
                     ),
                 }
             }
+
+            // Update the Pounder
+            c.shared.pounder.lock(|pounder| {
+                if let Some(pounder) = pounder {
+                    let mut builder = pounder.dds_output.builder();
+                    builder.update_channels(
+                        ad9959::Channel::ONE,
+                        Some(*settings.dual_iir.pounder_1_ftw1),
+                        Some(*settings.dual_iir.pounder_1_pow),
+                        Some(*settings.dual_iir.pounder_1_acr1),
+                    );
+                    builder.update_channels(
+                        ad9959::Channel::TWO,
+                        Some(*settings.dual_iir.pounder_1_ftw2),
+                        Some(0),
+                        Some(*settings.dual_iir.pounder_1_acr2),
+                    );
+                    builder.write();
+                    let _ = pounder.pounder.set_attenuation(
+                        hardware::pounder::Channel::In0,
+                        *settings.dual_iir.pounder_1_att2,
+                    );
+                    let _ = pounder.pounder.set_attenuation(
+                        hardware::pounder::Channel::Out0,
+                        *settings.dual_iir.pounder_1_att1,
+                    );
+                    let _ = pounder.pounder.set_attenuation(
+                        hardware::pounder::Channel::In1,
+                        *settings.dual_iir.pounder_2_att2,
+                    );
+                    let _ = pounder.pounder.set_attenuation(
+                        hardware::pounder::Channel::Out1,
+                        *settings.dual_iir.pounder_2_att1,
+                    );
+                    let mut builder = pounder.dds_output.builder();
+                    builder.update_channels(
+                        ad9959::Channel::THREE,
+                        Some(*settings.dual_iir.pounder_2_ftw1),
+                        Some(*settings.dual_iir.pounder_2_pow),
+                        Some(*settings.dual_iir.pounder_2_acr1),
+                    );
+                    builder.update_channels(
+                        ad9959::Channel::FOUR,
+                        Some(*settings.dual_iir.pounder_2_ftw2),
+                        Some(0),
+                        Some(*settings.dual_iir.pounder_2_acr2),
+                    );
+                    builder.write();
+                } else {
+                    log::error!("Pounder not found");
+                }
+            });
 
             c.shared
                 .network
